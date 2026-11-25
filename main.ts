@@ -1,49 +1,86 @@
-// One Line, Big Laugh — a single funny line, emitted deterministically.
+// One Line, Big Laugh — emit one funny line, deterministically.
 //
-// The joke is baked in as a plain constant: no network, no clock, no
-// randomness, so every run produces the exact same entry file.
+// Design: the entry is a single fixed string. Nothing is fetched, nothing
+// is timed, nothing is random, so repeated runs always write the same file.
+// Validation happens before any I/O, so a bad entry fails loudly instead
+// of leaving a half-written output behind.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const MAX_CHARS = 200;
+// Contest cap on the entry length, in characters.
+const ENTRY_LIMIT = 200;
 
-const JOKE =
+// The one-liner itself. Kept verbatim: the wording, spacing, curly quotes
+// and final full stop are part of the submission and must not be touched.
+const ONE_LINER =
   "My GPS has started sighing before it says \u201crecalculating,\u201d and honestly, that is the most honest relationship I have.";
 
-// Count visible characters by code point, so multi-byte glyphs are not
-// under-counted the way a raw UTF-16 length would under-count them.
-function charCount(text: string): number {
-  return [...text].length;
+// How the output directory is chosen: the harness sets
+// MAKEFUN_OUTPUT_DIR; outside the harness we fall back to /output.
+const DEFAULT_OUTPUT_DIR = "/output";
+const ENTRY_FILENAME = "entry.txt";
+
+// Length in code points, so characters outside the BMP count once each
+// instead of twice the way a plain `.length` would count them.
+function countChars(line: string): number {
+  let total = 0;
+  for (const _ch of line) total += 1;
+  return total;
 }
 
-function assertEntry(text: string): void {
-  const n = charCount(text);
-  if (n < 1 || text.trim().length === 0) {
-    throw new Error("entry is empty or only whitespace");
-  }
-  if (n > MAX_CHARS) {
-    throw new Error(
-      `entry is ${n} characters, ${n - MAX_CHARS} over the ${MAX_CHARS} limit`,
-    );
-  }
-  if (text.trim() !== text) {
-    throw new Error("entry has leading or trailing whitespace");
-  }
-  if (text.includes("\n")) {
+function hasBadWhitespace(line: string): boolean {
+  return line.trim() !== line;
+}
+
+function checkSingleLine(line: string): void {
+  if (line.includes("\n") || line.includes("\r")) {
     throw new Error("entry must be a single line");
   }
 }
 
-function outputDir(): string {
-  return process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+// Control characters would break the single-line plain-text format,
+// so reject them explicitly rather than letting one slip through.
+function checkNoControlChars(line: string): void {
+  for (const ch of line) {
+    if (ch.charCodeAt(0) < 0x20) {
+      throw new Error("entry contains a control character");
+    }
+  }
+}
+
+// Every rule the contest imposes on the entry, checked up front.
+function validateEntry(line: string): void {
+  const len = countChars(line);
+  if (len === 0 || line.trim().length === 0) {
+    throw new Error("entry is empty or only whitespace");
+  }
+  if (len > ENTRY_LIMIT) {
+    throw new Error(
+      `entry is ${len} characters, ${len - ENTRY_LIMIT} over the ${ENTRY_LIMIT} limit`,
+    );
+  }
+  if (hasBadWhitespace(line)) {
+    throw new Error("entry has leading or trailing whitespace");
+  }
+  checkSingleLine(line);
+  checkNoControlChars(line);
+}
+
+function resolveOutputDir(): string {
+  return process.env.MAKEFUN_OUTPUT_DIR ?? DEFAULT_OUTPUT_DIR;
+}
+
+function emitEntry(line: string, dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const target = join(dir, ENTRY_FILENAME);
+  writeFileSync(target, line, "utf8");
+  return target;
 }
 
 function main(): void {
-  assertEntry(JOKE);
-  const dir = outputDir();
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "entry.txt"), JOKE, "utf8");
-  console.log(`wrote ${charCount(JOKE)}-character entry to ${join(dir, "entry.txt")}`);
+  validateEntry(ONE_LINER);
+  const target = emitEntry(ONE_LINER, resolveOutputDir());
+  console.log(`wrote ${countChars(ONE_LINER)}-character entry to ${target}`);
 }
 
 main();
